@@ -22,7 +22,7 @@ from watchdog.events import FileSystemEventHandler
 load_dotenv()
 
 CONFIG = {
-    "PATHS_TO_WATCH": [r"C:\Users\Public\Downloads"],
+    "PATHS_TO_WATCH": ["/home/kali/Downloads"],
     "SCAN_THREADS": 2,
     "FILE_RETRY_ATTEMPTS": 5,
     "FILE_RETRY_DELAY": 1,
@@ -273,29 +273,23 @@ class FileMonitor:
             if Path(path).exists():
                 self.observer.schedule(FileHandler(self.scanner), path, recursive=True)
         self.observer.start()
-        logger.info("File monitoring started")
 
     def stop(self):
         self.observer.stop()
         self.observer.join()
-        logger.info("File monitoring stopped")
 
 def main():
-    logger.info("Starting Security Scanner")
     scanner = ScannerEngine()
-    scanner.start_workers()
     monitor = FileMonitor(scanner)
+    scanner.start_workers()
     monitor.start()
     try:
         while True:
             time.sleep(1)
     except KeyboardInterrupt:
-        logger.info("Shutting down")
-    finally:
         monitor.stop()
         scanner.shutdown()
         scanner.export_results()
-        logger.info("Results exported")
 
 if __name__ == "__main__":
     main()
