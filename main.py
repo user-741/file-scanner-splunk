@@ -22,7 +22,7 @@ from watchdog.events import FileSystemEventHandler
 load_dotenv()
 
 CONFIG = {
-    "PATHS_TO_WATCH": ["/"],
+    "PATHS_TO_WATCH": ["/"], 
     "SCAN_THREADS": 2,
     "FILE_RETRY_ATTEMPTS": 5,
     "FILE_RETRY_DELAY": 1,
@@ -260,7 +260,7 @@ class FileHandler(FileSystemEventHandler):
 
     def on_modified(self, event):
         if not event.is_directory:
-            time.sleep(1)
+            time.sleep(1) 
             self.scanner.queue_file(event.src_path)
 
 class FileMonitor:
@@ -271,7 +271,11 @@ class FileMonitor:
     def start(self):
         for path in CONFIG["PATHS_TO_WATCH"]:
             if Path(path).exists():
-                self.observer.schedule(FileHandler(self.scanner), path, recursive=True)
+                try:
+                    self.observer.schedule(FileHandler(self.scanner), path, recursive=True)
+                except Exception as e:
+                    logger.error(f"Error watching path {path}: {e}")
+                    continue
         self.observer.start()
 
     def stop(self):
@@ -293,3 +297,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
