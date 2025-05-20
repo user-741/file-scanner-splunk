@@ -18,9 +18,10 @@ from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 from send2trash import send2trash
 
+# Load environment variables
 load_dotenv()
 
-CONFIG = {
+# Configuration\CONFIG = {
     "PATHS_TO_WATCH": ["/home/kali/Downloads"],
     "SCAN_THREADS": 2,
     "FILE_RETRY_ATTEMPTS": 5,
@@ -30,6 +31,7 @@ CONFIG = {
     "LOG_FILE": "file_scanner.log",
     "MAX_LOG_SIZE": 10 * 1024 * 1024,
     "LOG_BACKUPS": 3,
+    # HEC endpoint on Splunk Enterprise
     "SIEM_ENDPOINT": "http://192.168.1.227:8088/services/collector",
     "SPLUNK_TOKEN": os.getenv("SPLUNK_TOKEN"),
     "VIRUSTOTAL_KEY": os.getenv("VIRUSTOTAL_KEY"),
@@ -112,13 +114,15 @@ class AISecurityAnalyzer:
         return min(risk, 1.0)
 
 def send_to_siem(event: dict):
-    token = CONFIG["SPLUNK_TOKEN"]
+    token = CONFIG.get("SPLUNK_TOKEN")
     if not token:
+        logger.error("No Splunk token configured")
         return
     headers = {"Authorization": f"Splunk {token}", "Content-Type": "application/json"}
     payload = {"event": event, "sourcetype": "_json", "source": "file_scanner"}
     try:
-        requests.post(CONFIG["SIEM_ENDPOINT"], headers=headers, json=payload, verify=False)
+        resp = requests.post(CONFIG["SIEM_ENDPOINT"], headers=headers, json=payload, verify=False, timeout=5)
+        resp.raise_for_status()
     except Exception as e:
         logger.error(f"SIEM error: {e}")
 
@@ -156,17 +160,26 @@ class ScannerEngine:
     def _process_file(self, filepath: str):
         if filepath in self.processed_files:
             return
+        # Zero Trust check
         if not self._zero_trust_check(filepath):
             self._record_scan_result(filepath, "BLOCKED", {"reason": "Zero Trust violation"})
+            try:
+                send2trash(filepath)
+                logger.info(f"Blocked file moved to trash: {filepath}")
+            except Exception as e:
+                logger.error(f"Failed to move blocked file: {e}")
             return
+        # Hash
         file_hash = self._calculate_hash(filepath)
         if not file_hash:
             return
+        # Risk assessment
         risk = self._assess_risk(filepath)
         if risk > CONFIG["RISK_THRESHOLD"]:
-            self._record_scan_result(filepath, "HIGH_RISK", {"risk_score": risk}, file_hash)
+            self._record_scan_result(filepath, "HIGH_RISK", {"risk_score": risk})
+        # Simulated malware detection
         status = "MALICIOUS" if "malware" in filepath.lower() else "CLEAN"
-        self._record_scan_result(filepath, status, {"detection": "Simulated"}, file_hash)
+        self._record_scan_result(filepath, status, {"detection": "Simulated", "risk_score": risk})
         if status == "MALICIOUS":
             self._quarantine_file(filepath)
 
@@ -180,8 +193,8 @@ class ScannerEngine:
 
     def _calculate_hash(self, filepath: str) -> Optional[str]:
         try:
-            b = Path(filepath).read_bytes()
-            return hashlib.sha256(b).hexdigest()
+            data = Path(filepath).read_bytes()
+            return hashlib.sha256(data).hexdigest()
         except Exception as e:
             logger.error(f"Hash error: {e}")
             return None
@@ -195,33 +208,29 @@ class ScannerEngine:
             risk += 0.2
         return min(risk, 1.0)
 
-    def _record_scan_result(self, filepath: str, status: str, details: dict, file_hash: str = None):
+    def _record_scan_result(self, filepath: str, status: str, details: dict):
         result = ScanResult(
             filepath=filepath,
-            timestamp=datetime.now().isoformat(),
-            sha256=file_hash or "unknown",
+            timestamp=datetime.utcnow().isoformat() + 'Z',
+            sha256=details.get("risk_score", "unknown"),
             status=status,
             details=details
         )
         with self.result_lock:
             self.scan_results.append(result)
-        event = {
-            "timestamp": result.timestamp,
-            "file": Path(filepath).name,
-            "hash": result.sha256,
-            "status": status,
-            "mitre": self.threat_intel.map_detection(filepath),
-            "risk_score": details.get("risk_score", 0)
-        }
+        event = result.to_dict()
+        event.update({
+            "mitre": self.threat_intel.map_detection(filepath)
+        })
         send_to_siem(event)
         logger.info(f"Scan Result: {result}")
 
     def _quarantine_file(self, filepath: str):
         try:
             send2trash(filepath)
-            logger.warning(f"Malicious file sent to recycle bin: {filepath}")
+            logger.warning(f"Malicious file quarantined: {filepath}")
         except Exception as e:
-            logger.error(f"Failed to delete file safely: {e}")
+            logger.error(f"Failed to quarantine file: {e}")
 
     def queue_file(self, filepath: str) -> bool:
         if filepath in self.processed_files:
