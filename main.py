@@ -30,7 +30,7 @@ CONFIG = {
     "LOG_FILE": "file_scanner.log",
     "MAX_LOG_SIZE": 10 * 1024 * 1024,
     "LOG_BACKUPS": 3,
-    "SIEM_ENDPOINT": "http://localhost:8088/services/collector",
+    "SIEM_ENDPOINT": "http://192.168.1.227:8088/services/collector",
     "SPLUNK_TOKEN": os.getenv("SPLUNK_TOKEN"),
     "VIRUSTOTAL_KEY": os.getenv("VIRUSTOTAL_KEY"),
     "COMPLIANCE_DB": "compliance_tracker.db",
