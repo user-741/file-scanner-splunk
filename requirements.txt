@@ -1,4 +1,4 @@
-python-dotenv
 watchdog
+python-dotenv
 requests
-Send2Trash
+send2trash
