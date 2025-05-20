@@ -7,17 +7,16 @@ import logging
 import requests
 import sqlite3
 import uuid
-
 from queue import Queue, Empty
 from datetime import datetime
 from logging.handlers import RotatingFileHandler
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
-
 from dotenv import load_dotenv
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
+from send2trash import send2trash
 
 load_dotenv()
 
@@ -101,8 +100,7 @@ class AISecurityAnalyzer:
         if not data:
             return 0.0
         freq = collections.Counter(data)
-        entropy = -sum((count/len(data)) * math.log2(count/len(data)) for count in freq.values())
-        return entropy
+        return -sum((count/len(data)) * math.log2(count/len(data)) for count in freq.values())
 
     def analyze(self, file_data: bytes) -> float:
         entropy = self.calculate_entropy(file_data)
@@ -219,14 +217,11 @@ class ScannerEngine:
         logger.info(f"Scan Result: {result}")
 
     def _quarantine_file(self, filepath: str):
-        quarantine_dir = Path(filepath).parent / "Quarantine"
-        quarantine_dir.mkdir(exist_ok=True)
         try:
-            new_path = quarantine_dir / f"QUAR_{Path(filepath).name}"
-            Path(filepath).rename(new_path)
-            logger.warning(f"Quarantined: {new_path}")
+            send2trash(filepath)
+            logger.warning(f"Malicious file sent to recycle bin: {filepath}")
         except Exception as e:
-            logger.error(f"Quarantine failed: {e}")
+            logger.error(f"Failed to delete file safely: {e}")
 
     def queue_file(self, filepath: str) -> bool:
         if filepath in self.processed_files:
