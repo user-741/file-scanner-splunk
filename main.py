@@ -22,7 +22,7 @@ from watchdog.events import FileSystemEventHandler
 load_dotenv()
 
 CONFIG = {
-    "PATHS_TO_WATCH": ["/home/kali/Downloads"],
+    "PATHS_TO_WATCH": [os.getenv("WATCH_PATH") or str(Path.home() / "Downloads")],
     "SCAN_THREADS": 2,
     "FILE_RETRY_ATTEMPTS": 5,
     "FILE_RETRY_DELAY": 1,
@@ -31,9 +31,8 @@ CONFIG = {
     "LOG_FILE": "file_scanner.log",
     "MAX_LOG_SIZE": 10 * 1024 * 1024,
     "LOG_BACKUPS": 3,
-    "SIEM_ENDPOINT": "http://192.168.1.227:8088/services/collector",
+    "SIEM_ENDPOINT": os.getenv("SPLUNK_HEC_URL") or "http://localhost:8088/services/collector",
     "SPLUNK_TOKEN": os.getenv("SPLUNK_TOKEN"),
-    "VIRUSTOTAL_KEY": os.getenv("VIRUSTOTAL_KEY"),
     "COMPLIANCE_DB": "compliance_tracker.db",
     "RISK_THRESHOLD": 0.7,
     "ZERO_TRUST_POLICY": {
@@ -95,7 +94,7 @@ class ThreatIntel:
             return {"technique": "T1204.002", "tactic": "Execution", "mitigation": "Application whitelisting"}
         return {"technique": "T1105", "tactic": "Command and Control", "mitigation": "Network segmentation"}
 
-class AISecurityAnalyzer:
+class RiskAnalyzer:
     def calculate_entropy(self, data: bytes) -> float:
         import math, collections
         if not data:
@@ -134,6 +133,7 @@ class ScannerEngine:
         self.result_lock = threading.Lock()
         self.compliance = ComplianceTracker()
         self.threat_intel = ThreatIntel()
+        self.risk_analyzer = RiskAnalyzer()
         self.compliance.log_control("SI-4", "File integrity monitoring")
         self.compliance.log_control("RA-5", "Vulnerability scanning")
 
@@ -158,12 +158,16 @@ class ScannerEngine:
     def _process_file(self, filepath: str):
         if filepath in self.processed_files:
             return
+        time.sleep(CONFIG["FILE_RETRY_DELAY"])
+        if not Path(filepath).is_file():
+            return
         if not self._zero_trust_check(filepath):
             self._record_scan_result(filepath, "BLOCKED", {"reason": "Zero Trust violation"})
             return
         file_hash = self._calculate_hash(filepath)
         if not file_hash:
             return
+        self.processed_files.add(filepath)
         risk = self._assess_risk(filepath)
         if risk > CONFIG["RISK_THRESHOLD"]:
             self._record_scan_result(filepath, "HIGH_RISK", {"risk_score": risk}, file_hash)
@@ -195,7 +199,11 @@ class ScannerEngine:
             risk += 0.4
         if "temp" in filepath.lower():
             risk += 0.2
-        return min(risk, 1.0)
+        try:
+            content_risk = self.risk_analyzer.analyze(Path(filepath).read_bytes())
+        except OSError:
+            content_risk = 0.0
+        return min(max(risk, content_risk), 1.0)
 
     def _record_scan_result(self, filepath: str, status: str, details: dict, file_hash: str = None):
         result = ScanResult(
@@ -230,6 +238,8 @@ class ScannerEngine:
 
     def queue_file(self, filepath: str) -> bool:
         if filepath in self.processed_files:
+            return False
+        if "Quarantine" in Path(filepath).parts:
             return False
         ext = Path(filepath).suffix.lower()
         if ext in CONFIG["SKIP_EXTENSIONS"]:
